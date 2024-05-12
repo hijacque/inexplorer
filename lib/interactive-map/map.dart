@@ -34,7 +34,9 @@ class MapData {
   final TileLayer tileLayer;
 
   List<Marker> visibleLocationMarkers = [];
+  List<Marker> pathMarkers = [];
   List<Marker> markers = [];
+  List<Polyline> polyLines = [];
 
   MapData({
     required this.tileLayer,
@@ -57,7 +59,7 @@ class InteractiveMap extends StatefulWidget {
   final void Function(int newLevel)? onChangeMapLevel;
   final List<TileLayer> mapTiles;
 
-  final bool is_indoors;
+  final bool isIndoors;
 
   const InteractiveMap({
     Key? key,
@@ -69,7 +71,7 @@ class InteractiveMap extends StatefulWidget {
     required this.minZoom,
     this.initialZoom = 0,
     this.defaultLocation = const LatLng(0, 0),
-    this.is_indoors = false,
+    this.isIndoors = false,
     this.getDirections,
     this.onChangeMapLevel,
   }) : super(key: key);
@@ -93,8 +95,9 @@ class _InteractiveMapState extends State<InteractiveMap> {
   Map<String, dynamic>? _selectedLocation;
   LatLng? _userLocation;
   Timer? _updateMarkersTimer;
+  List? _routes;
+  int _currentRoute = 0;
 
-  // TODO: separate function for detecting user's current location
   void moveToCurrentLocation() async {
     late Position currentPosition;
     try {
@@ -102,7 +105,7 @@ class _InteractiveMapState extends State<InteractiveMap> {
       _userLocation =
           LatLng(currentPosition.latitude, currentPosition.longitude);
     } catch (error) {
-      print(error);
+      debugPrint(error.toString());
       _userLocation = null;
     }
 
@@ -119,72 +122,92 @@ class _InteractiveMapState extends State<InteractiveMap> {
     // plot current location of the user in the map
     if (_userLocation != null &&
         visibleBounds.contains(_userLocation ?? widget.defaultLocation)) {
-      currentMap.markers = [
+      currentMap.visibleLocationMarkers = [
         Marker(
           point: _userLocation ?? widget.defaultLocation,
-          child: Icon(
+          child: const Icon(
             Icons.radio_button_checked_outlined,
             color: Colors.blue,
           ),
         )
       ];
     } else {
-      currentMap.markers.clear();
+      currentMap.visibleLocationMarkers.clear();
     }
 
     // plot visible locations of known places in the map
     List<Map<String, dynamic>> visibleLocations =
         await widget.fetchVisibleLocations(visibleBounds);
 
-    currentMap.visibleLocationMarkers.clear();
     for (Map<String, dynamic> location in visibleLocations) {
       currentMap.visibleLocationMarkers.add(
         Marker(
-          point: location['center'],
-          alignment: Alignment.center,
-          child: IconButton(
-            icon: Icon(
-              locationMarkerIcons[location['category']] ??
-                  Icons.radio_button_checked,
-              color: BLUE,
-            ),
-            style: TextButton.styleFrom(
-                shape: CircleBorder(),
-                backgroundColor: LIGHT,
-                padding: EdgeInsets.all(2),
-                shadowColor: Colors.grey,
-                elevation: 2),
-            onPressed: () async {
-              if (_isLoadingLocation) return;
+            width: 150,
+            height: 150,
+            point: location['center'],
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  location['name'] ??
+                      location['category']
+                          .toString()
+                          .split('_')
+                          .map((word) => word.isNotEmpty
+                              ? word[0].toUpperCase() + word.substring(1)
+                              : '')
+                          .join(' '),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: DARK, height: 1),
+                ),
+                IconButton(
+                  icon: Icon(
+                    locationMarkerIcons[location['category']] ??
+                        Icons.radio_button_checked,
+                    color: BLUE,
+                  ),
+                  style: TextButton.styleFrom(
+                      shape: const CircleBorder(),
+                      backgroundColor: LIGHT,
+                      padding: const EdgeInsets.all(2),
+                      shadowColor: Colors.grey,
+                      elevation: 2),
+                  onPressed: () async {
+                    if (_isLoadingLocation) return;
 
-              setState(() {
-                _isLoadingLocation = true;
-              });
+                    setState(() {
+                      _isLoadingLocation = true;
+                    });
 
-              _selectedLocation = await widget.fetchSelectedLocation(
-                location['id'],
-                location['type'],
-              );
+                    _selectedLocation = await widget.fetchSelectedLocation(
+                      location['id'],
+                      location['type'],
+                    );
 
-              setState(() {
-                if (_selectedLocation != null)
-                  updateMapLocation(_selectedLocation?['bounds']);
-                _isLoadingLocation = false;
-              });
-            },
-          ),
-        ),
+                    setState(() {
+                      if (_selectedLocation != null) {
+                        updateMapLocation(_selectedLocation?['bounds']);
+                      }
+                      _isLoadingLocation = false;
+                    });
+                  },
+                ),
+              ],
+            )),
       );
     }
 
-    setState(() {
-      currentMap.markers.addAll(currentMap.visibleLocationMarkers);
-    });
+    setState(() {});
   }
 
   void _startUpdateMarkerTimer() {
     _updateMarkersTimer?.cancel();
-    _updateMarkersTimer = Timer(Duration(seconds: 2), updateMapMarkers);
+    _updateMarkersTimer = Timer(const Duration(seconds: 2), updateMapMarkers);
   }
 
   void updateMapLocation(LatLngBounds bounds) {
@@ -195,13 +218,73 @@ class _InteractiveMapState extends State<InteractiveMap> {
     ));
   }
 
+  void plotPath(List path) {
+    // Clear path markers
+    for (MapData level in _mapLevels) {
+      level.pathMarkers.clear();
+    }
+
+    Map<int, List<LatLng>> pathsPerMapLevel = {};
+    // convert nodes to Latlng in their respective maps
+    for (Map node in path) {
+      int level = node['level'] - 1;
+      if (!pathsPerMapLevel.containsKey(level)) {
+        pathsPerMapLevel[level] = <LatLng>[];
+      }
+      pathsPerMapLevel[level]?.add(LatLng(node['lat'], node['lng']));
+      if (path.last == node) {
+        _mapLevels[level].pathMarkers.add(Marker(
+              point: LatLng(node['lat'], node['lng']),
+              child: const Icon(
+                Icons.radio_button_checked,
+                color: Colors.redAccent,
+                size: 36,
+              ),
+            ));
+      } else if (path.first == node) {
+        _mapLevels[level].pathMarkers.add(Marker(
+              point: LatLng(node['lat'], node['lng']),
+              child: const Icon(
+                Icons.radio_button_checked,
+                color: Colors.blueAccent,
+                size: 36,
+              ),
+            ));
+      }
+    }
+
+    // plot path in map
+    int initialLevel = pathsPerMapLevel.keys.first;
+    for (int level in pathsPerMapLevel.keys) {
+      Polyline line = Polyline(
+        points: pathsPerMapLevel[level] ?? [],
+        isDotted: true,
+        strokeWidth: 6,
+        strokeCap: StrokeCap.round,
+        color: DARK,
+      );
+      _mapLevels[level].polyLines.clear();
+      _mapLevels[level].polyLines.add(line);
+
+      Timer(
+        Duration(seconds: (level - initialLevel).abs() * 3, milliseconds: 500),
+        () async {
+          await _mapLevelController?.animateToPage(
+            level,
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.linear,
+          );
+          setState(() {
+            updateMapLocation(line.boundingBox);
+          });
+        },
+      );
+    }
+  }
+
   Widget myMap(MapData map) {
     return FlutterMap(
       mapController: _mapControllers[_mapLevels.indexOf(map)],
-      children: [
-        map.tileLayer,
-        MarkerLayer(markers: map.markers),
-      ],
       options: MapOptions(
         keepAlive: true,
         initialCenter: widget.defaultLocation,
@@ -213,7 +296,6 @@ class _InteractiveMapState extends State<InteractiveMap> {
           moveToCurrentLocation();
           setState(() => _isLoadingLocation = false);
         },
-        onTap: (position, point) => print([point.latitude, point.longitude]),
         onPositionChanged: (position, hasGesture) => _startUpdateMarkerTimer(),
         interactionOptions: InteractionOptions(
           flags: _isLoadingLocation
@@ -223,12 +305,18 @@ class _InteractiveMapState extends State<InteractiveMap> {
                       .rotate, // enable all interactions except rotate
         ),
       ),
+      children: [
+        map.tileLayer,
+        PolylineLayer(polylines: map.polyLines),
+        MarkerLayer(markers: map.visibleLocationMarkers + map.pathMarkers),
+      ],
     );
   }
 
   @override
   void initState() {
     super.initState();
+
     if (widget.mapTiles.length > 1) {
       _mapLevelController = PageController(initialPage: 0);
     } else {
@@ -292,7 +380,7 @@ class _InteractiveMapState extends State<InteractiveMap> {
                     color: Colors.white.withOpacity(0.5),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: SizedBox(
+                  child: const SizedBox(
                     height: 72,
                     width: 72,
                     child: CircularProgressIndicator(
@@ -307,7 +395,7 @@ class _InteractiveMapState extends State<InteractiveMap> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Container(
-                    margin: EdgeInsets.all(24),
+                    margin: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -336,16 +424,12 @@ class _InteractiveMapState extends State<InteractiveMap> {
                           delayOptionLoad: true,
                           loadDelay: const Duration(seconds: 2),
                         ),
-                        SizedBox(
-                          height: 12,
-                        ),
-// Map action buttons
+                        const SizedBox(height: 12),
                         Wrap(
                           direction: Axis.horizontal,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           spacing: 12,
                           children: [
-// To get user's current location
                             IconButton(
                               onPressed: () {
                                 setState(() => _isLoadingLocation = true);
@@ -353,13 +437,12 @@ class _InteractiveMapState extends State<InteractiveMap> {
                                 moveToCurrentLocation();
                                 setState(() => _isLoadingLocation = false);
                               },
-                              icon: Icon(Icons.my_location),
+                              icon: const Icon(Icons.my_location),
                               iconSize: 26,
                               color: BLUE,
                               style: lightButtonStyle,
                               tooltip: 'Find my location',
                             ),
-// Adjusts the zoom level of the map
                             Wrap(
                               direction: Axis.horizontal,
                               spacing: -3,
@@ -381,19 +464,16 @@ class _InteractiveMapState extends State<InteractiveMap> {
                                       });
                                     }
                                   },
-                                  icon: Icon(
-                                    Icons.add,
-                                    size: 20,
-                                  ),
+                                  icon: const Icon(Icons.add, size: 20),
                                   color: (mapController.camera.zoom + 1 <=
                                           (mapController.camera.maxZoom ??
                                               mapController.camera.zoom))
                                       ? PURPLE
                                       : LIGHT_GREY,
-                                  padding: EdgeInsets.only(left: 14, right: 12),
+                                  padding: const EdgeInsets.only(left: 14, right: 12),
                                   style: lightButtonStyle.merge(
                                     TextButton.styleFrom(
-                                      shape: RoundedRectangleBorder(
+                                      shape: const RoundedRectangleBorder(
                                         borderRadius: BorderRadius.only(
                                           topLeft: Radius.circular(50),
                                           bottomLeft: Radius.circular(50),
@@ -419,19 +499,16 @@ class _InteractiveMapState extends State<InteractiveMap> {
                                       });
                                     }
                                   },
-                                  icon: Icon(
-                                    Icons.remove,
-                                    size: 20,
-                                  ),
+                                  icon: const Icon(Icons.remove, size: 20),
                                   color: (mapController.camera.zoom - 1 >
                                           (mapController.camera.minZoom ??
                                               mapController.camera.zoom))
                                       ? PURPLE
                                       : LIGHT_GREY,
-                                  padding: EdgeInsets.only(left: 12, right: 14),
+                                  padding: const EdgeInsets.only(left: 12, right: 14),
                                   style: lightButtonStyle.merge(
                                     TextButton.styleFrom(
-                                      shape: RoundedRectangleBorder(
+                                      shape: const RoundedRectangleBorder(
                                         borderRadius: BorderRadius.only(
                                           topRight: Radius.circular(50),
                                           bottomRight: Radius.circular(50),
@@ -444,29 +521,53 @@ class _InteractiveMapState extends State<InteractiveMap> {
                             ),
                             // Button for rute recommendation
                             Visibility(
-                              visible: widget.is_indoors,
+                              visible: widget.isIndoors,
                               child: TextButton(
                                 onPressed: () async {
-                                  final path = await Navigator.push(
+                                  for (MapData level in _mapLevels) {
+                                    level.polyLines.clear();
+                                    level.pathMarkers.clear();
+                                  }
+                                  setState(() {
+                                    _selectedLocation = null;
+                                  });
+
+                                  final List? results = await Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (context) => DirectionsPage(),
+                                      builder: (context) => DirectionsPage(
+                                        existingRoutes: _routes,
+                                      ),
                                     ),
                                   );
-                                  if (path == null) return;
-                                  print(path);
+
+                                  if (results == null) {
+                                    setState(() {
+                                      _routes = null;
+                                    });
+                                    return;
+                                  }
+
+                                  _currentRoute = results[0];
+                                  _routes = results[1];
+                                  List path = _routes?[_currentRoute]['path'];
+                                  setState(() {
+                                    plotPath(path);
+                                  });
                                   // plot the path
                                   // animate how destination will be reached
                                 },
+                                style: lightButtonStyle,
                                 child: Text(
-                                  'Get directions',
+                                  _routes == null
+                                      ? 'Get directions'
+                                      : 'Change route',
                                   style: TextStyle(
-                                    color: BLUE,
+                                    color: _routes == null ? BLUE : SUCCESS,
                                     fontWeight: FontWeight.w500,
                                     fontSize: 14,
                                   ),
                                 ),
-                                style: lightButtonStyle,
                               ),
                             ),
                           ],
@@ -486,7 +587,6 @@ class _InteractiveMapState extends State<InteractiveMap> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            // To move from one map level to another
                             Visibility(
                               visible: !_isSearchingLocation,
                               child: Padding(
@@ -494,15 +594,26 @@ class _InteractiveMapState extends State<InteractiveMap> {
                                   bottom: _selectedLocation == null ? 12 : 0,
                                 ),
                                 child: widget.mapTiles.length > 1
-                                    ? LevelNavigator(
+                                    ? FloorNavigator(
+                                        floor: _currentMapIndex + 1,
                                         maxLevel: widget.mapTiles.length,
-                                        initialLevel: _currentMapIndex + 1,
-                                        onChangeLevel: (int level) {
-                                          _mapLevelController?.animateToPage(
-                                            level,
-                                            duration:
-                                                Duration(milliseconds: 500),
-                                            curve: Curves.linear,
+                                        onLevelUp: () async {
+                                          await _mapLevelController
+                                              ?.animateToPage(
+                                            _currentMapIndex + 1,
+                                            duration: const Duration(milliseconds: 500),
+                                            curve: Curves.easeIn,
+                                          );
+                                          setState(() {
+                                            _selectedLocation = null;
+                                          });
+                                        },
+                                        onLevelDown: () async {
+                                          await _mapLevelController
+                                              ?.animateToPage(
+                                            _currentMapIndex - 1,
+                                            duration: const Duration(milliseconds: 500),
+                                            curve: Curves.easeIn,
                                           );
                                           setState(() {
                                             _selectedLocation = null;
@@ -510,8 +621,8 @@ class _InteractiveMapState extends State<InteractiveMap> {
                                         },
                                       )
                                     : IconButton(
-                                        onPressed: () {},
-                                        icon: Icon(
+                                        onPressed: null,
+                                        icon: const Icon(
                                           Icons.question_mark,
                                           size: 24,
                                           color: LIGHT_GREY,
@@ -531,7 +642,7 @@ class _InteractiveMapState extends State<InteractiveMap> {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (context) => new IndoorPage(
+                                      builder: (context) => IndoorPage(
                                         6,
                                         locationName:
                                             _selectedLocation?['name'],
@@ -543,11 +654,10 @@ class _InteractiveMapState extends State<InteractiveMap> {
                                 },
                                 style: primaryButtonStyle.merge(
                                   TextButton.styleFrom(
-                                    padding:
-                                        EdgeInsets.only(left: 12, right: 18),
+                                    padding: const EdgeInsets.only(left: 12, right: 18),
                                   ),
                                 ),
-                                child: Row(
+                                child: const Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(
@@ -573,7 +683,7 @@ class _InteractiveMapState extends State<InteractiveMap> {
                                 onPressed: () {
                                   setState(() => _selectedLocation = null);
                                 },
-                                icon: Icon(
+                                icon: const Icon(
                                   Icons.close,
                                   color: BLUE,
                                   size: 24,
@@ -589,7 +699,7 @@ class _InteractiveMapState extends State<InteractiveMap> {
                         visible:
                             _selectedLocation != null && !_isSearchingLocation,
                         child: LocationCard(
-                          location: _selectedLocation ?? Map(),
+                          location: _selectedLocation ?? {},
                         ),
                       ),
                     ],
@@ -613,7 +723,7 @@ class LocationCard extends StatelessWidget {
   Widget build(BuildContext context) {
     if (location['address'] == null) {
       return Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.all(Radius.circular(8.0)),
           boxShadow: [
@@ -631,7 +741,7 @@ class LocationCard extends StatelessWidget {
                   ? location['category'] ?? 'Category'
                   : location['name'] ?? 'Name',
               softWrap: true,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
                 height: 1.5,
@@ -653,7 +763,7 @@ class LocationCard extends StatelessWidget {
       );
     }
     return Container(
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(8.0)),
         boxShadow: [
@@ -671,7 +781,7 @@ class LocationCard extends StatelessWidget {
                 ? location['category'] ?? 'Category'
                 : location['name'] ?? 'Name',
             softWrap: true,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
               height: 1.5,
@@ -688,14 +798,13 @@ class LocationCard extends StatelessWidget {
               height: 2,
             ),
           ),
-          Padding(
-            padding: EdgeInsets.symmetric(
-                vertical: 4.0), // Adjust the vertical padding as needed
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 4.0),
             child: Divider(thickness: 1.5),
           ),
           Text(
             location['address'] ?? 'Address',
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 16,
               height: 1.5,
             ),
@@ -706,7 +815,88 @@ class LocationCard extends StatelessWidget {
   }
 }
 
-// TODO: Add onChangeLevel function property
+class FloorNavigator extends StatelessWidget {
+  final int floor;
+  final int maxLevel;
+  final int minLevel;
+  final void Function() onLevelUp;
+  final void Function() onLevelDown;
+
+  const FloorNavigator({
+    Key? key,
+    required this.floor,
+    required this.onLevelUp,
+    required this.onLevelDown,
+    this.maxLevel = 1,
+    this.minLevel = 1,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(50),
+        boxShadow: const [
+          BoxShadow(color: Colors.grey, blurRadius: 8.0, spreadRadius: 1),
+        ],
+      ),
+      child: Wrap(
+        direction: Axis.horizontal,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          IconButton(
+            onPressed: floor > minLevel ? onLevelDown : null,
+            icon: const Icon(Icons.arrow_downward, size: 24),
+            color: PURPLE,
+            // padding: EdgeInsets.only(left: 14, right: 12),
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(50),
+                  bottomLeft: Radius.circular(50),
+                ),
+              ),
+            ),
+          ),
+          Container(
+            width: 64,
+            height: 42,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              border: Border.all(color: LIGHT, width: 1.5),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              floor.toString(),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 20),
+            ),
+          ),
+          IconButton(
+            onPressed: floor < maxLevel ? onLevelUp : null,
+            icon: const Icon(Icons.arrow_upward, size: 24),
+            color: PURPLE,
+            // padding: EdgeInsets.only(left: 14, right: 12),
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.only(
+                  topRight: Radius.circular(50),
+                  bottomRight: Radius.circular(50),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class LevelNavigator extends StatefulWidget {
   final int maxLevel;
   final int minLevel;
@@ -747,15 +937,15 @@ class _LevelNavigatorState extends State<LevelNavigator> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: LIGHT, width: 1.5),
-        boxShadow: [
+        boxShadow: const [
           BoxShadow(color: Colors.grey, blurRadius: 8.0, spreadRadius: 1),
         ],
       ),
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
+          const Text(
             'Floor level',
             style: TextStyle(
               fontSize: 16,
@@ -763,51 +953,44 @@ class _LevelNavigatorState extends State<LevelNavigator> {
               color: PURPLE,
             ),
           ),
-          SizedBox(height: 10),
+          const SizedBox(height: 10),
           TextField(
             controller: floorFieldController,
             decoration: LightTextFieldStyle.copyWith(
               prefixIcon: IconButton(
                 onPressed: () {
-                  if (currentLevel < widget.maxLevel)
-                    currentLevel += 1;
-                  else
+                  if (currentLevel >= widget.maxLevel) {
                     return;
+                  }
 
+                  currentLevel += 1;
                   widget.onChangeLevel(currentLevel - 1);
                   setState(() {
                     floorFieldController.text = currentLevel.toString();
                   });
                 },
-                icon: Icon(
-                  Icons.arrow_upward,
-                  size: 20,
-                ),
-                padding: EdgeInsets.all(2),
+                icon: const Icon(Icons.arrow_upward, size: 20),
+                padding: const EdgeInsets.all(2),
               ),
               prefixIconColor:
                   (currentLevel < widget.maxLevel) ? BLUE : Colors.grey,
               suffixIcon: IconButton(
                 onPressed: () {
-                  if (currentLevel > widget.minLevel)
-                    currentLevel -= 1;
-                  else
+                  if (currentLevel <= widget.minLevel) {
                     return;
+                  }
 
+                  currentLevel -= 1;
                   widget.onChangeLevel(currentLevel - 1);
                   setState(() {
                     floorFieldController.text = currentLevel.toString();
                   });
                 },
-                icon: Icon(
-                  Icons.arrow_downward,
-                  size: 20,
-                ),
+                icon: const Icon(Icons.arrow_downward, size: 20),
               ),
-              suffixIconColor:
-                  (currentLevel > widget.minLevel) ? BLUE : Colors.grey,
+              suffixIconColor: (currentLevel > widget.minLevel) ? BLUE : Colors.grey,
             ),
-            style: TextStyle(fontSize: 18),
+            style: const TextStyle(fontSize: 18),
             textAlign: TextAlign.center,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
