@@ -72,11 +72,6 @@ class _LocationSearchTextFieldState extends State<LocationSearchTextField> {
   @override
   initState() {
     super.initState();
-    // widget.fieldTextController.addListener(() {
-    //   setState(() {
-    //     _isEditing =
-    //   });
-    // })
   }
 
   @override
@@ -103,9 +98,8 @@ class _LocationSearchTextFieldState extends State<LocationSearchTextField> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8.0),
                 color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.grey, blurRadius: 8.0, spreadRadius: 1),
+                boxShadow: const [
+                  BoxShadow(color: Colors.grey, blurRadius: 8.0, spreadRadius: 1),
                 ],
                 border: Border.all(color: LIGHT, width: 2),
               ),
@@ -115,7 +109,7 @@ class _LocationSearchTextFieldState extends State<LocationSearchTextField> {
               ),
               clipBehavior: Clip.hardEdge,
               child: ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: 420.0),
+                constraints: const BoxConstraints(maxHeight: 220.0),
                 child: ListView.separated(
                   padding: const EdgeInsets.all(0),
                   shrinkWrap: true,
@@ -126,7 +120,7 @@ class _LocationSearchTextFieldState extends State<LocationSearchTextField> {
                       child: ListTile(
                         title: Text(
                           location['name'],
-                          style: TextStyle(fontWeight: FontWeight.w500),
+                          style: const TextStyle(fontWeight: FontWeight.w500),
                         ),
                         subtitle: Text(
                           location['address'],
@@ -146,7 +140,7 @@ class _LocationSearchTextFieldState extends State<LocationSearchTextField> {
                       ),
                     );
                   },
-                  separatorBuilder: (context, i) => Divider(
+                  separatorBuilder: (context, i) => const Divider(
                     height: 1.5,
                     color: LIGHT,
                   ),
@@ -163,7 +157,7 @@ class _LocationSearchTextFieldState extends State<LocationSearchTextField> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(8.0),
-            boxShadow: [
+            boxShadow: const [
               BoxShadow(color: Colors.grey, blurRadius: 8.0, spreadRadius: 1),
             ],
           ),
@@ -172,39 +166,31 @@ class _LocationSearchTextFieldState extends State<LocationSearchTextField> {
             focusNode: focusNode,
             cursorColor: PURPLE,
             decoration: LightTextFieldStyle.copyWith(
-              prefixIconConstraints:
-                  BoxConstraints.expand(width: 56, height: 56),
+              prefixIconConstraints: const BoxConstraints.expand(width: 56, height: 56),
               prefixIcon: _isLoading
-                  ? Container(
+                  ? const SizedBox(
                       width: 24,
                       height: 24,
                       child: Center(
                         child: CircularProgressIndicator(color: LIGHT_PURPLE),
                       ),
                     )
-                  : Icon(
-                      Icons.search,
-                      size: 26.0,
-                      color: Colors.grey,
-                    ),
+                  : const Icon(Icons.search, size: 26.0, color: Colors.grey),
               suffixIcon: controller.text.isNotEmpty || focusNode.hasFocus
                   ? IconButton(
                       onPressed: () {
                         setState(() {
+                          focusNode.unfocus();
                           controller.text = '';
                           _options.clear();
                         });
                       },
-                      icon: Icon(
-                        Icons.close,
-                        size: 24,
-                        color: PURPLE,
-                      ),
+                      icon: const Icon(Icons.close, size: 24, color: PURPLE),
                     )
                   : null,
               hintText: widget.hintText ?? '',
             ),
-            style: TextStyle(
+            style: const TextStyle(
               color: Colors.black,
               fontSize: 16,
               fontWeight: FontWeight.w400,
