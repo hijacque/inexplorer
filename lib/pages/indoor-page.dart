@@ -30,7 +30,6 @@ class _IndoorPageState extends State<IndoorPage> {
     List results = await InexplorerAPI.search(mapID, query: query);
 
     List<Map<String, dynamic>> locations = results.map((location) {
-      print(location);
       List bounds = location['bounds'];
 
       return {
@@ -48,7 +47,6 @@ class _IndoorPageState extends State<IndoorPage> {
         'address': location['address'],
         'lat': location['center']['lat'],
         'lon': location['center']['lng'],
-        // 'bounds': bounds
         'bounds': LatLngBounds(
           LatLng(bounds[0], bounds[1]),
           LatLng(bounds[2], bounds[3]),
@@ -65,7 +63,7 @@ class _IndoorPageState extends State<IndoorPage> {
     try {
       results = await InexplorerAPI.searchBounds(visibleBounds, mapID);
     } catch (error) {
-      print(error);
+      debugPrint(error.toString());
       return [];
     }
 
@@ -95,7 +93,7 @@ class _IndoorPageState extends State<IndoorPage> {
 
       selected = elements[0];
     } catch (error) {
-      print(error);
+      debugPrint(error.toString());
       return null;
     }
 
@@ -109,8 +107,8 @@ class _IndoorPageState extends State<IndoorPage> {
           .map((word) =>
               word.isNotEmpty ? word[0].toUpperCase() + word.substring(1) : '')
           .join(' '),
-      'name': selected['tags']['name'] ?? null,
-      'address': selected['tags']['addr:full'] ?? null,
+      'name': selected['tags']['name'],
+      'address': selected['tags']['addr:full'],
       'lat': selected['center']['lat'],
       'lon': selected['center']['lng'],
       'bounds': LatLngBounds(
@@ -125,7 +123,7 @@ class _IndoorPageState extends State<IndoorPage> {
         location['indoors'] = indoorMap;
       }
     } catch (error) {
-      print(error);
+      debugPrint(error.toString());
     }
 
     return location;
@@ -165,12 +163,12 @@ class _IndoorPageState extends State<IndoorPage> {
           searchLocations: _searchLocations,
           fetchVisibleLocations: _fetchVisibleLocations,
           fetchSelectedLocation: _lookupSelectedLocation,
-          defaultLocation: LatLng(0, 0),
+          defaultLocation: const LatLng(0, 0),
           initialZoom: 1,
           minZoom: 0,
           maxZoom: 3,
           onChangeMapLevel: _onChangeLevel,
-          is_indoors: true,
+          isIndoors: true,
         ),
       ),
     );
