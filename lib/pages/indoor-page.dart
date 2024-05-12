@@ -6,13 +6,18 @@ import 'package:inexplorer_app/location.dart';
 import 'package:inexplorer_app/interactive-map/map.dart';
 
 class IndoorPage extends StatefulWidget {
+  final int? parentMapID;
   final int mapID;
   final List indoorMapIDs;
   final String locationName;
 
-  const IndoorPage(this.mapID,
-      {Key? key, required this.locationName, this.indoorMapIDs = const []})
-      : super(key: key);
+  const IndoorPage(
+    this.mapID, {
+    Key? key,
+    required this.locationName,
+    this.indoorMapIDs = const [],
+    this.parentMapID,
+  }) : super(key: key);
 
   @override
   State<IndoorPage> createState() => _IndoorPageState();
@@ -29,22 +34,24 @@ class _IndoorPageState extends State<IndoorPage> {
       List bounds = location['bounds'];
 
       return {
+        'map_id': mapID,
         'id': location['id'],
         'type': location['type'],
         'category': location['category']
             .toString()
             .split('_')
             .map((word) => word.isNotEmpty
-            ? word[0].toUpperCase() + word.substring(1)
-            : '')
+                ? word[0].toUpperCase() + word.substring(1)
+                : '')
             .join(' '),
         'name': location['name'],
-        'address': location['addr'],
+        'address': location['address'],
         'lat': location['center']['lat'],
         'lon': location['center']['lng'],
         // 'bounds': bounds
         'bounds': LatLngBounds(
-          LatLng(bounds[0],bounds[1]), LatLng(bounds[2],bounds[3]),
+          LatLng(bounds[0], bounds[1]),
+          LatLng(bounds[2], bounds[3]),
         ),
       };
     }).toList();
@@ -67,6 +74,7 @@ class _IndoorPageState extends State<IndoorPage> {
       return <String, dynamic>{
         'id': location['id'],
         'type': location['type'],
+        'name': location['tags']['name'],
         'category': location['tags']['amenity'],
         'center': LatLng(location['center']['lat'], location['center']['lng']),
         'bounds': LatLngBounds(
@@ -166,39 +174,5 @@ class _IndoorPageState extends State<IndoorPage> {
         ),
       ),
     );
-  }
-}
-
-class IndoorMap {
-  final double minX;
-  final double minY;
-  final double maxX;
-  final double maxY;
-
-  static const maxLat = 90;
-  static const maxLng = 180;
-  static const minLat = -90;
-  static const minLng = -180;
-
-  const IndoorMap(this.minX, this.minY, this.maxX, this.maxY);
-
-  LatLng convertCoordinates(double x, double y) {
-    // validate coordinates in bounds
-    x = x > maxX
-        ? maxX
-        : x < minX
-            ? minX
-            : x;
-    y = y > maxY
-        ? maxY
-        : y < minY
-            ? minY
-            : y;
-
-    // Calculate the latitude and longitude using linear interpolation
-    double latitude = ((maxLat - minLat) / (maxY - minY)) * y + minLat;
-    double longitude = ((maxLng - minLng) / (maxX - minX)) * x + minLng;
-    print('($latitude, $longitude)');
-    return LatLng(latitude, longitude);
   }
 }
