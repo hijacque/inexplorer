@@ -1,4 +1,4 @@
-# inexplorer_app
+# inexplorer
 
 An indoor navigation application for CS Thesis entitled, "Enhancement of Harris Hawks Optimization applied in path planning for an indoor navigation mobile application".
 
