@@ -3,6 +3,9 @@ from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest, Http
 
 from django.db import connection
 import json
+from time import time
+
+from . import ppl, EHHO
 
 def execute_query(query:str):
     with connection.cursor() as cursor:
@@ -123,9 +126,9 @@ def search(req):
         elif tags['name']:
             elements[i]['name'] = tags['name']
         
-        address = tags.get('addr', None)
+        address = tags.get('address', None)
         if address is not None:
-            elements[i]['addr'] = address
+            elements[i]['address'] = address
         
         elements[i]['category'] = category
 
@@ -179,7 +182,7 @@ def search_bounds(req):
         elem = elements[i]
         
         if elem['tags']:
-            elements[i]['tags'] = json.loads(f'{{{elem["tags"]}}}')
+            elements[i]['tags'] = json.loads(elem['tags'])
         
         if elem['type'] == 'node':
             elem_bounds = [
@@ -229,6 +232,7 @@ def lookup_map(req):
             f'SELECT id AS map_id, level FROM Map WHERE parent_element_id = "{parent_elem_id}" AND ' +
             f'parent_map_id {"IS NULL" if (parent_map_id == 0) else f"= {parent_map_id}"} ORDER BY level;'
         )
+        map_route = '/'
     else:
         parent_map = execute_query(
             'SELECT parent_map_id AS id, parent_element_id as element_id FROM Map WHERE ' +
@@ -258,9 +262,24 @@ def lookup_map(req):
             'body': 'Indoor map not supported in this location.'
         })
     
+    # if map_id != 0:
+    #     map_route = execute_query(
+    #         f'WITH RECURSIVE MapHierarchy AS (SELECT id, parent_map_id FROM Map WHERE id = {map_id} UNION ALL ' +
+    #         'SELECT m.id, m.parent_map_id FROM Map m JOIN MapHierarchy mh ON mh.parent_map_id = m.id) ' +
+    #         f'SELECT id FROM MapHierarchy WHERE id != {map_id};'
+    #     )
+    #     map_route = [str(map['id']) for map in map_route]
+    #     map_route.reverse()
+    #     map_route.append(map_id)
+    #     map_route = '/'.join(map_route)
+
     return JsonResponse({
         'status': 200,
         'body': child_maps
+        # 'body': {
+        #     'route': map_route,
+        #     'maps': child_maps
+        # }
     })
 
 def lookup(req):
@@ -295,14 +314,273 @@ def lookup(req):
         'body': elements
     })
 
-#TODO: fix map tiles folder
-# TODO: create route recommendation api
-def routes(req):
-    start_map = req.GET.get('start_map')
-    start_pos = str(req.GET.get('start_pos'))
-    start_pos = start_pos.split(',')
+def get_entrance(element_id):
+    type = element_id[0]
+    elem_types = ['N', 'W', 'R']
+    if type == 'N':
+        id = element_id[1:]
+        pos = execute_query(
+            f'SELECT n.lat, n.lng FROM Element e INNER JOIN Node n ON e.id = CONCAT("N", n.id) WHERE n.id = {id};'
+        )
+    elif type == 'W':
+        id = element_id[1:]
+        pos = execute_query(
+            'SELECT n.lat, n.lng FROM Waypoint wp JOIN Node n ON wp.node_id = n.id JOIN ' +
+            f'Element e ON e.id = CONCAT("N", n.id) WHERE wp.way_id = {id} AND e.tags LIKE "%path%entrance%";'
+        )
+    elif type == 'R':
+        id = element_id[1:]
+    else:
+        raise Exception({
+            'status': 400, 'body': 'Invalid element ID of given location.'
+        })
 
-    goal = req.GET.get('start')
+    if not pos:
+        raise Exception({
+            'status': 400, 'body': 'Invalid element ID of given location.'
+        })
+    
+    pos = pos[0]
+    return (pos['lat'], pos['lng'])
+
+def routes(req):
+    start_map = int(req.GET.get('start_map'))
+    goal_map = int(req.GET.get('goal_map'))
+
+    start_pos = req.GET.get('start_pos', None) # latlong values are given
+    start_loc = req.GET.get('start_loc', None) # recognized location is given
+    if start_pos:
+        try:
+            start = tuple([float(pos) for pos in str(start_pos).split(',')])
+            if len(start_pos) != 2:
+                raise Exception('Incomplete coordinates of start position.')
+        except:
+            return JsonResponse({
+                'status': 400,
+                'body': 'Invalid start position.'
+            })
+    elif start_loc:
+        try:
+            start = get_entrance(start_loc)
+        except Exception as error:
+            print(repr(error))
+            return JsonResponse({
+                'status': 400,
+                'body': 'Invalid start location.'
+            })
+
+    goal_pos = req.GET.get('goal_pos', None)
+    goal_loc = req.GET.get('goal_loc', None) # recognized location is given
+    if goal_pos:
+        try:
+            goal = tuple([float(pos) for pos in str(goal_pos).split(',')])
+            if len(goal_pos) != 2:
+                raise Exception('Incomplete coordinates of goal position.')
+        except:
+            return JsonResponse({
+                'status': 400,
+                'body': 'Invalid goal position.'
+            })
+    elif goal_loc:
+        try:
+            goal = get_entrance(goal_loc)
+        except Exception as error:
+            print(repr(error))
+            return JsonResponse({
+                'status': 400,
+                'body': 'Invalid goal location.'
+            })
+    
+    map_data = init_map(start_map, start, goal_map, goal)
+    if map_data is None:
+        return JsonResponse({
+            'status': 500,
+            'body': 'Encountered error while initializing map.'
+        })
+
+    start, goal, waypoints, nodes = map_data
+
+    objectives = [
+        {
+            'name': 'path length',
+            'function': ppl.path_length,
+            'weight': 1
+        },{
+            'name': 'travel time',
+            'function': ppl.travel_time,
+            'weight': 1
+        }
+    ]
+
+    # for i in range(3):
+    #     paths[i] = ppl.Path(paths[i], nodes, waypoints, objectives)
+    
+    # path1 = paths[0]
+    # path2 = paths[1]
+    # path3 = paths[2]
+    pop_size = 20
+    max_iter = 100
+    # recommend route using EHHO algorithm minimizing path length and travel time with equal significance
+    path1, exec_time, convergence = EHHO.plan_path(start['id'], goal['id'], nodes, waypoints, pop_size, max_iter, objectives)
+    print(f'Route recommendation execution time of path 1: {exec_time} seconds\n')
+
+    # recommend route using EHHO algorithm minimizing path length and travel time with where path length has greater significance
+    objectives[0]['weight'] = 2
+    path2, exec_time, convergence = EHHO.plan_path(start['id'], goal['id'], nodes, waypoints, pop_size, max_iter, objectives)
+    print(f'Route recommendation execution time of path 2: {exec_time} seconds\n')
+
+    # recommend route using EHHO algorithm minimizing path length and travel time with where travel time has greater significance
+    objectives[0]['weight'] = 1
+    objectives[1]['weight'] = 2
+    path3, exec_time, convergence = EHHO.plan_path(start['id'], goal['id'], nodes, waypoints, pop_size, max_iter, objectives)
+    print(f'Route recommendation execution time of path 3: {exec_time} seconds\n')
+    
+    return JsonResponse({
+        'status': 200, 'body': [{
+            'path': [nodes[id] for id in path1.path], 'cost': path1.costs, 'fitness score': path1.fitness
+        },{
+            'path': [nodes[id] for id in path2.path], 'cost': path2.costs, 'fitness score': path2.fitness
+        },{
+            'path': [nodes[id] for id in path3.path], 'cost': path3.costs, 'fitness score': path3.fitness
+        },]
+    })
+
+def init_map(start_map, start_pos, goal_map, goal_pos):
+    start_root = execute_query(
+        f'WITH RECURSIVE MapTree AS (SELECT id, parent_map_id FROM map WHERE id = {start_map} UNION ALL ' +
+        'SELECT m.id, m.parent_map_id FROM map m JOIN MapTree mt ON m.id = mt.parent_map_id) ' +
+        'SELECT id FROM MapTree WHERE parent_map_id IS NULL;'
+    ) [0]['id']
+    
+    goal_root = execute_query(
+        f'WITH RECURSIVE MapTree AS (SELECT id, parent_map_id FROM map WHERE id = {goal_map} UNION ALL ' +
+        'SELECT m.id, m.parent_map_id FROM map m JOIN MapTree mt ON m.id = mt.parent_map_id) ' +
+        'SELECT id FROM MapTree WHERE parent_map_id IS NULL;'
+    ) [0]['id']
+
+    if start_root != goal_root:
+        return None
+    
+    waypoints, nodes = get_waypoints(start_root)
+    start = nearest_waypoint(nodes, start_map, start_pos[0], start_pos[1])
+    goal = nearest_waypoint(nodes, goal_map, goal_pos[0], goal_pos[1])
+    return start, goal, waypoints, nodes
+
+def get_waypoints(root_map):
+    indoor_maps = execute_query(
+        f'WITH RECURSIVE MapHierarchy AS (SELECT id, parent_map_id FROM map WHERE id = {root_map} UNION ALL ' +
+        'SELECT m.id, m.parent_map_id FROM map m JOIN MapHierarchy mh ON m.parent_map_id = mh.id) ' +
+        'SELECT m.id, m.width, m.height, m.level from Map m INNER JOIN MapHierarchy mh ON m.id = mh.id ' +
+        'ORDER BY m.id, m.level;'
+    )
+
+    map_ids = [map['id'] for map in indoor_maps]
+    nodes = execute_query(
+        'SELECT n.id, n.lat, n.lng, wp.way_id, wp.sequence, m.level, ne.map_id, ne.tags FROM Waypoint wp INNER JOIN ' +
+        'Way w ON wp.way_id = w.id INNER JOIN Element we ON CONCAT("W", w.id) = we.id INNER JOIN Node n ON ' +
+        'wp.node_id = n.id INNER JOIN Element ne ON CONCAT("N", n.id) = ne.id INNER JOIN Map m ON ' +
+        'ne.map_id = m.id WHERE we.tags LIKE "%path%" ' +
+        f'AND we.map_id IN ({", ".join(str(id) for id in map_ids)}) ORDER BY wp.way_id, wp.sequence;'
+    )
+    
+    node_data = {}
+    waypoints = {}
+    total_nodes = len(nodes)
+    for i in range(total_nodes):
+        node_id = str(nodes[i]['id'])
+        way_id = nodes[i]['way_id']
+        map_id = nodes[i].pop('map_id')
+        tags = nodes[i].pop('tags')
+
+        # print(way_id, '\t', node_id, '\t', nodes[i]['sequence'])
+        
+        if node_id not in waypoints:
+            waypoints[node_id] = {}
+            if tags:
+                tags = json.loads(tags)
+            
+            map_index = map_ids.index(map_id)
+            x, y  = ppl.convert_latlng(
+                nodes[i]['lat'],
+                nodes[i]['lng'],
+                indoor_maps[map_index]['width'],
+                indoor_maps[map_index]['height'],
+            )
+
+            node_data[node_id] = {
+                'coord': (round(x, 6), round(y, 6)),
+                'lat': nodes[i].pop('lat'), 'lng': nodes[i].pop('lng'),
+                'map_id': map_id, 'level': nodes[i].pop('level'), 'tags': tags
+            }
+        
+        prev = None
+        next = None
+        if 0 < i < total_nodes - 1:
+            prev = nodes[i - 1]
+            next = nodes[i + 1]
+        elif i > 0:
+            prev = nodes[i - 1]
+        elif i < total_nodes - 1:
+            next = nodes[i + 1]
+        else:
+            continue
+        
+        if prev and prev['id'] != node_id and prev['way_id'] == way_id and prev['sequence'] == nodes[i]['sequence'] - 1:
+            prev_id = str(prev['id'])
+            if prev_id not in waypoints[node_id]:
+                waypoints[node_id][prev_id] = {'mode': 'walk'}
+
+        if next and next['id'] != node_id and next['way_id'] == way_id and next['sequence'] == nodes[i]['sequence'] + 1:
+            next_id = str(next['id'])
+            if next_id not in waypoints[node_id]:
+                waypoints[node_id][next_id] = {'mode': 'walk'}
+    
+    for node_id in waypoints:
+        tags = node_data[node_id]['tags']
+        coord = node_data[node_id]['coord']
+        
+        if tags and 'entrance:link' in tags:
+            entrance_links = tags.pop('entrance:link').split(',')
+            entrance_links = [id[1:] for id in entrance_links]
+            entrance_links = [id for id in entrance_links if id in node_data]
+
+            waypoints[node_id].update({
+                id: {'mode': 'entrance', 'length': 0} for id in entrance_links
+            })
+        elif tags and 'stairs:link' in tags:
+            stairs_links = tags.pop('stairs:link').split(',')
+            stairs_links = [id[1:] for id in stairs_links]
+            stairs_links = [id for id in stairs_links if id in node_data]
+            waypoints[node_id].update({
+                id: {'mode': 'stairs', 'length': 6} for id in stairs_links
+            })
+        
+        neighbors = waypoints[node_id]
+        for id in neighbors:
+            if neighbors[id]['mode'] != 'walk':
+                continue
+            
+            neighbors[id].update(
+                {'length': ppl.euclidean_distance(coord, node_data[id]['coord'])}
+            )
+    
+    return waypoints, node_data
+
+def nearest_waypoint(points, map_id, lat, lng):
+    nearest = None
+    for id in points:
+        if points[id]['map_id'] != map_id:
+            continue
+        
+        dist = ppl.euclidean_distance((lng, lat), (points[id]['lng'], points[id]['lat']))
+        if nearest is None or nearest['dist'] > dist:
+            nearest = points[id]
+            nearest['id'] = id
+            nearest['dist'] = dist
+            if dist ==  0:
+                break
+
+    return nearest
 
 def get_elements(elem_ids:list, with_geom:bool, for_relation:bool=False, relation_id:int=0):
     total_elements = len(elem_ids)
@@ -385,7 +663,7 @@ def get_nodes(ids:list[str], with_geom:bool, for_relation:bool=False, relation_i
             'lat': nodes[i].pop('lat'),
             'lng': nodes[i].pop('lng')
         }
-        nodes[i]['tags'] = json.loads(f'{{{node["tags"]}}}' or '{}')
+        nodes[i]['tags'] = json.loads(node['tags'] or '{}')
     
     return nodes
 
@@ -440,7 +718,7 @@ def get_ways(ids:list[str], with_geom:bool, for_relation:bool=False, relation_id
                 'lat': ways[i].pop('lat'),
                 'lng': ways[i].pop('lng')
             }
-            ways[i]['tags'] = json.loads(f'{{{way["tags"]}}}' or '{}')
+            ways[i]['tags'] = json.loads(way['tags'] or '{}')
 
     return ways
 
@@ -488,6 +766,6 @@ def get_relations(ids:list[str], with_geom:bool, for_relation:bool=False, relati
             'lat': relations[i].pop('lat'),
             'lng': relations[i].pop('lng')
         }
-        relations[i]['tags'] = json.loads(f'{{{relation["tags"]}}}' or '{}')
+        relations[i]['tags'] = json.loads(relation['tags'] or '{}')
     
     return relations

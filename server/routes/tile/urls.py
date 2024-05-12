@@ -1,4 +1,5 @@
 from django.urls import path
+
 from . import views
 
 urlpatterns = [
@@ -6,5 +7,6 @@ urlpatterns = [
     path('search-bounds/', views.search_bounds, name='search-bounds'),
     path('lookup-map/', views.lookup_map, name='lookup-map'),
     path('lookup/', views.lookup, name='lookup'),
-    path('search/', views.search, name='search')
+    path('search/', views.search, name='search'),
+    path('routes/', views.routes, name='routes')
 ]
