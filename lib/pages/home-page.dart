@@ -4,7 +4,6 @@ import 'package:latlong2/latlong.dart';
 
 import 'dart:async';
 
-import 'package:inexplorer_app/style.dart';
 import 'package:inexplorer_app/location.dart';
 import 'package:inexplorer_app/interactive-map/map.dart';
 
@@ -60,10 +59,7 @@ class _HomePageState extends State<HomePage> {
     double maxLat = visibleBounds.north;
     double maxLng = visibleBounds.east;
 
-    String query = '[out:json];(' +
-        'way["amenity"]($minLat, $minLng, $maxLat, $maxLng);' +
-        'relation["amenity"]($minLat, $minLng, $maxLat, $maxLng);' +
-        '); out center;';
+    String query = '[out:json];(way["amenity"]($minLat, $minLng, $maxLat, $maxLng); relation["amenity"]($minLat, $minLng, $maxLat, $maxLng); ); out center;';
 
     var overpassResults = await OverpassAPI.query(query);
 
@@ -72,6 +68,7 @@ class _HomePageState extends State<HomePage> {
       return {
         'id': location['id'],
         'type': location['type'],
+        'name': location['tags']['name'],
         'category': location['tags']['amenity'],
         'center': LatLng(location['center']['lat'], location['center']['lon']),
         'bounds': location['bounds'],
@@ -104,7 +101,7 @@ class _HomePageState extends State<HomePage> {
           .map((word) =>
               word.isNotEmpty ? word[0].toUpperCase() + word.substring(1) : '')
           .join(' '),
-      'name': selected['name'] ?? null,
+      'name': selected['name'],
       'address': displayName.substring(displayName.indexOf(',') + 2),
       'lat': center.latitude,
       'lon': center.longitude,
@@ -121,7 +118,7 @@ class _HomePageState extends State<HomePage> {
         location['indoors'] = indoorMap;
       }
     } catch (error) {
-      print(error);
+      debugPrint(error.toString());
     }
 
     return location;
@@ -139,7 +136,7 @@ class _HomePageState extends State<HomePage> {
           fetchVisibleLocations: _fetchVisibleLocations,
           fetchSelectedLocation: _lookupSelectedLocation,
           initialZoom: 18,
-          defaultLocation: LatLng(14.5868936, 120.9763617906138),
+          defaultLocation: const LatLng(14.5868936, 120.9763617906138), // PLM GPS coordinates
           minZoom: 0,
           maxZoom: 18,
         ),
