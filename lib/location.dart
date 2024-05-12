@@ -25,7 +25,7 @@ class Location {
 }
 
 convertResponse(Response response) {
-  var responseJson;
+  late dynamic responseJson;
 
   try {
     responseJson = jsonDecode(response.body);
@@ -33,11 +33,11 @@ convertResponse(Response response) {
     final document = XmlDocument.parse(response.body);
     final paragraphs = document.findAllElements("p");
 
-    paragraphs.forEach((element) {
+    for (var element in paragraphs) {
       if (element.text.trim() == '') {
         return;
       }
-    });
+    }
     return {'status': response.statusCode};
   }
 
@@ -106,7 +106,29 @@ class NominatimAPI {
 }
 
 class InexplorerAPI {
-  static const String _apiURL = '192.168.1.7:8080';
+  static const String _apiURL = '172.20.102.80:8000'; // domain of the server
+
+  static Future<List> routes(Map startLocation, Map goalLocation) async {
+    Response responseText = await get(Uri.http(
+      _apiURL,
+      '/routes',
+      <String, String>{
+        'start_map': startLocation['map_id'].toString(),
+        'start_loc': '${startLocation['type'][0].toString().toUpperCase()}${startLocation['id']}',
+        'goal_map': goalLocation['map_id'].toString(),
+        'goal_loc': '${goalLocation['type'][0].toString().toUpperCase()}${goalLocation['id']}',
+      },
+    ));
+
+    var result = convertResponse(responseText);
+    if (result['status'] != 200) {
+      return [];
+    }
+
+    List path = result['body'];
+    // print(path);
+    return path;
+  }
 
   static Future<List> search(int mapID,
       {String query = '', bool deepSearch = false}) async {
